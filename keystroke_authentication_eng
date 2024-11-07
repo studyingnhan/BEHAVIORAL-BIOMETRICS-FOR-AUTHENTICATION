@@ -1,0 +1,158 @@
+import random
+from pynput import keyboard
+import time
+import pandas as pd
+
+# Function to generate a random 6-digit OTP
+def generate_otp():
+    return str(random.randint(100000, 999999))
+
+# Function to verify the OTP entered by the user
+def verify_otp(generated_otp):
+    user_otp = input("Please enter the OTP sent to you and press Enter: ")
+    return user_otp == generated_otp
+
+# Record key press and release times
+def record_keystrokes(data_list):
+    def on_press(key):
+        try:
+            data_list.append({"key": key.char, "time": time.time(), "event": "press"})
+        except AttributeError:
+            data_list.append({"key": str(key), "time": time.time(), "event": "press"})
+
+    def on_release(key):
+        try:
+            data_list.append({"key": key.char, "time": time.time(), "event": "release"})
+        except AttributeError:
+            data_list.append({"key": str(key), "time": time.time(), "event": "release"})
+        # Stop listening when the Esc key is pressed
+        if key == keyboard.Key.esc:
+            return False
+
+    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+        listener.join()
+
+# Calculate hold time and flight time between keys
+def calculate_hold_and_flight_times(df):
+    hold_times = []
+    flight_times = []
+
+    for i in range(len(df) - 1):
+        # Calculate hold time, ignoring special keys like 'Key.esc'
+        if df.iloc[i]['event'] == 'press' and df.iloc[i + 1]['event'] == 'release' \
+                and df.iloc[i]['key'] == df.iloc[i + 1]['key'] and not str(df.iloc[i]['key']).startswith('Key'):
+            hold_time = df.iloc[i + 1]['time'] - df.iloc[i]['time']
+            hold_times.append((df.iloc[i]['key'], hold_time))
+
+        # Calculate flight time between consecutive key presses, ignoring special keys
+        if df.iloc[i]['event'] == 'release' and df.iloc[i + 1]['event'] == 'press' \
+                and not str(df.iloc[i]['key']).startswith('Key') and not str(df.iloc[i + 1]['key']).startswith('Key'):
+            flight_time = df.iloc[i + 1]['time'] - df.iloc[i]['time']
+            flight_times.append((df.iloc[i]['key'], df.iloc[i + 1]['key'], flight_time))
+
+    return hold_times, flight_times
+
+# Compare two entries and display detailed differences
+def compare_times(times1, times2, threshold=0.1):
+    if len(times1) != len(times2):
+        print("The typing behavior in the two entries does not match.")
+        return False  # Different number of keys
+
+    match = True  # To track if all keys match
+
+    for t1, t2 in zip(times1, times2):
+        if t1[0] != t2[0]:  # Check if keys are the same
+            print(f"Keys do not match: {t1[0]} vs {t2[0]}")
+            match = False
+            continue
+
+        # Check and display time deviation for each key
+        try:
+            time1 = float(t1[1])
+            time2 = float(t2[1])
+            difference = abs(time1 - time2)
+            if difference > threshold:  # Compare time with the deviation threshold
+                print(f"Key '{t1[0]}' does not match: {time1:.4f} vs {time2:.4f} (Difference: {difference:.4f}, Threshold: {threshold})")
+                match = False
+            else:
+                print(f"Key '{t1[0]}' matches: {time1:.4f} vs {time2:.4f} (Difference: {difference:.4f}, Threshold: {threshold})")
+        except ValueError:
+            print(f"Unable to convert hold time for key '{t1[0]}' to a number.")
+            match = False
+
+    return match
+
+# Main loop to perform multiple tests
+while True:
+    print("\nKeystroke Authentication Program.")
+    print("Step 1: Please enter any string and press the Esc key when done.")
+    print("Step 2: After completing step 1, enter the same string again and press the Esc key when done.\n")
+    print("Note: Try to type with the same speed and hold time in both entries.")
+
+    # Store keystroke data for two entries
+    key_data_first_entry = []
+    key_data_second_entry = []
+
+    # Record the first entry
+    print("\nStarting to record the first entry...")
+    record_keystrokes(key_data_first_entry)
+    print("First entry completed.\n")
+
+    # Record the second entry
+    print("Starting to record the second entry...")
+    record_keystrokes(key_data_second_entry)
+    print("Second entry completed.\n")
+
+    # Convert keystroke data to DataFrame for easier analysis
+    df_first_entry = pd.DataFrame(key_data_first_entry)
+    df_second_entry = pd.DataFrame(key_data_second_entry)
+
+    # Calculate hold and flight times for both entries
+    hold_times_first, flight_times_first = calculate_hold_and_flight_times(df_first_entry)
+    hold_times_second, flight_times_second = calculate_hold_and_flight_times(df_second_entry)
+
+    # Display analysis for each entry
+    print("\nAnalysis of the first entry:")
+    print("Hold Times:")
+    for key, time_held in hold_times_first:
+        print(f"Key '{key}' held for {time_held:.4f} seconds")
+
+    print("Flight Times:")
+    for key1, key2, time_between in flight_times_first:
+        print(f"From key '{key1}' to '{key2}' in {time_between:.4f} seconds")
+
+    print("\nAnalysis of the second entry:")
+    print("Hold Times:")
+    for key, time_held in hold_times_second:
+        print(f"Key '{key}' held for {time_held:.4f} seconds")
+
+    print("Flight Times:")
+    for key1, key2, time_between in flight_times_second:
+        print(f"From key '{key1}' to '{key2}' in {time_between:.4f} seconds")
+
+    # Perform authentication and display detailed differences
+    print("\nComparing Hold Times:")
+    is_valid_hold = compare_times(hold_times_first, hold_times_second)
+
+    print("\nComparing Flight Times:")
+    is_valid_flight = compare_times(flight_times_first, flight_times_second)
+
+    # Result
+    if is_valid_hold and is_valid_flight:
+        print("\nAuthentication Successful: Typing behavior is consistent. Valid user.")
+        
+        # Generate OTP and prompt user to enter it
+        otp = generate_otp()
+        print(f"Your OTP is: {otp}")  # In practice, this should be sent via SMS or email
+        if verify_otp(otp):
+            print("Multi-factor authentication successful. User authenticated.")
+        else:
+            print("Multi-factor authentication failed. Incorrect OTP.")
+    else:
+        print("\nAuthentication Failed: Typing behavior is inconsistent. Invalid user.")
+
+    # Continue or not
+    retry = input("\nWould you like to try again? (y/n): ").strip().lower()
+    if retry != 'y':
+        print("Ending Program.")
+        break
