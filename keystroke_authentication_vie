@@ -1,0 +1,158 @@
+import random
+from pynput import keyboard
+import time
+import pandas as pd
+
+# Hàm tạo mã OTP ngẫu nhiên 6 chữ số
+def generate_otp():
+    return str(random.randint(100000, 999999))
+
+# Hàm xác thực mã OTP do người dùng nhập
+def verify_otp(generated_otp):
+    user_otp = input("Vui lòng nhập mã OTP đã gửi cho bạn và nhấn: ")
+    return user_otp == generated_otp
+
+# ghi nhận thời gian nhấn và thả phím
+def record_keystrokes(data_list):
+    def on_press(key):
+        try:
+            data_list.append({"key": key.char, "time": time.time(), "event": "press"})
+        except AttributeError:
+            data_list.append({"key": str(key), "time": time.time(), "event": "press"})
+
+    def on_release(key):
+        try:
+            data_list.append({"key": key.char, "time": time.time(), "event": "release"})
+        except AttributeError:
+            data_list.append({"key": str(key), "time": time.time(), "event": "release"})
+        # Dừng lắng nghe khi nhấn phím Esc
+        if key == keyboard.Key.esc:
+            return False
+
+    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+        listener.join()
+
+# tính thời gian giữ phím và khoảng thời gian giữa các phím
+def calculate_hold_and_flight_times(df):
+    hold_times = []
+    flight_times = []
+
+    for i in range(len(df) - 1):
+        # Tính thời gian giữ phím, bỏ qua các phím đặc biệt như 'Key.esc'
+        if df.iloc[i]['event'] == 'press' and df.iloc[i + 1]['event'] == 'release' \
+                and df.iloc[i]['key'] == df.iloc[i + 1]['key'] and not str(df.iloc[i]['key']).startswith('Key'):
+            hold_time = df.iloc[i + 1]['time'] - df.iloc[i]['time']
+            hold_times.append((df.iloc[i]['key'], hold_time))
+
+        # Tính khoảng thời gian giữa các lần nhấn phím liên tiếp, bỏ qua các phím đặc biệt
+        if df.iloc[i]['event'] == 'release' and df.iloc[i + 1]['event'] == 'press' \
+                and not str(df.iloc[i]['key']).startswith('Key') and not str(df.iloc[i + 1]['key']).startswith('Key'):
+            flight_time = df.iloc[i + 1]['time'] - df.iloc[i]['time']
+            flight_times.append((df.iloc[i]['key'], df.iloc[i + 1]['key'], flight_time))
+
+    return hold_times, flight_times
+
+# so sánh hai lần nhập và hiển thị chi tiết sự khác biệt
+def compare_times(times1, times2, threshold=0.1):
+    if len(times1) != len(times2):
+        print("Hành vi nhấn phím trong hai lần nhập không khớp.")
+        return False  # Số lượng phím khác nhau
+
+    match = True  # Để theo dõi nếu tất cả các phím đều khớp
+
+    for t1, t2 in zip(times1, times2):
+        if t1[0] != t2[0]:  # Kiểm tra xem phím có giống nhau không
+            print(f"Phím không khớp: {t1[0]} vs {t2[0]}")
+            match = False
+            continue
+
+        # Kiểm tra và hiển thị độ lệch thời gian cho từng phím
+        try:
+            time1 = float(t1[1])
+            time2 = float(t2[1])
+            difference = abs(time1 - time2)
+            if difference > threshold:  # So sánh thời gian với ngưỡng sai lệch
+                print(f"Phím '{t1[0]}' không khớp: {time1:.4f} vs {time2:.4f} (Chênh lệch: {difference:.4f}, Ngưỡng: {threshold})")
+                match = False
+            else:
+                print(f"Phím '{t1[0]}' khớp: {time1:.4f} vs {time2:.4f} (Chênh lệch: {difference:.4f}, Ngưỡng: {threshold})")
+        except ValueError:
+            print(f"Không thể chuyển đổi thời gian giữ cho phím '{t1[0]}' sang số.")
+            match = False
+
+    return match
+
+# vòng lặp chính để thực hiện nhiều lần kiểm tra
+while True:
+    print("\nChương trình xác thực hành vi gõ phím.")
+    print("Bước 1: Vui lòng nhập một chuỗi ký tự bất kỳ và nhấn phím Esc khi hoàn tất.")
+    print("Bước 2: Sau khi hoàn tất bước 1, nhập lại cùng chuỗi ký tự đó lần nữa và nhấn phím Esc để hoàn tất.\n")
+    print("Lưu ý: Hãy cố gắng gõ với tốc độ và cách giữ phím giống nhau trong cả hai lần.")
+
+    # Lưu trữ dữ liệu gõ phím cho hai lần nhập
+    key_data_first_entry = []
+    key_data_second_entry = []
+
+    # Ghi nhận lần nhập đầu tiên
+    print("\nBắt đầu ghi nhận lần nhập đầu tiên...")
+    record_keystrokes(key_data_first_entry)
+    print("Lần nhập đầu tiên hoàn tất.\n")
+
+    # Ghi nhận lần nhập thứ hai
+    print("Bắt đầu ghi nhận lần nhập thứ hai...")
+    record_keystrokes(key_data_second_entry)
+    print("Lần nhập thứ hai hoàn tất.\n")
+
+    # Chuyển đổi dữ liệu gõ phím thành DataFrame để dễ dàng phân tích
+    df_first_entry = pd.DataFrame(key_data_first_entry)
+    df_second_entry = pd.DataFrame(key_data_second_entry)
+
+    # Tính toán cho hai lần nhập
+    hold_times_first, flight_times_first = calculate_hold_and_flight_times(df_first_entry)
+    hold_times_second, flight_times_second = calculate_hold_and_flight_times(df_second_entry)
+
+    # Hiển thị phân tích từng lần nhập
+    print("\nPhân tích lần nhập đầu tiên:")
+    print("Thời gian giữ phím (Hold Times):")
+    for key, time_held in hold_times_first:
+        print(f"Phím '{key}' giữ trong {time_held:.4f} giây")
+
+    print("Khoảng thời gian giữa các phím (Flight Times):")
+    for key1, key2, time_between in flight_times_first:
+        print(f"Từ phím '{key1}' đến '{key2}' trong {time_between:.4f} giây")
+
+    print("\nPhân tích lần nhập thứ hai:")
+    print("Thời gian giữ phím (Hold Times):")
+    for key, time_held in hold_times_second:
+        print(f"Phím '{key}' giữ trong {time_held:.4f} giây")
+
+    print("Khoảng thời gian giữa các phím (Flight Times):")
+    for key1, key2, time_between in flight_times_second:
+        print(f"Từ phím '{key1}' đến '{key2}' trong {time_between:.4f} giây")
+
+    # Thực hiện xác thực và hiển thị chi tiết sự khác biệt
+    print("\nSo sánh thời gian giữ phím (Hold Times):")
+    is_valid_hold = compare_times(hold_times_first, hold_times_second)
+
+    print("\nSo sánh khoảng thời gian giữa các phím (Flight Times):")
+    is_valid_flight = compare_times(flight_times_first, flight_times_second)
+
+    # Kết quả
+    if is_valid_hold and is_valid_flight:
+        print("\nXác thực thành công: Hành vi gõ phím nhất quán. Người dùng hợp lệ.")
+        
+        # Sinh mã OTP và yêu cầu người dùng nhập mã
+        otp = generate_otp()
+        print(f"Mã OTP của bạn là: {otp}")  # Thực tế mã này nên gửi qua SMS hoặc email
+        if verify_otp(otp):
+            print("Xác thực đa yếu tố thành công. Người dùng đã được xác thực.")
+        else:
+            print("Xác thực đa yếu tố thất bại. Mã OTP không đúng.")
+    else:
+        print("\nXác thực thất bại: Hành vi gõ phím không nhất quán. Người dùng không hợp lệ.")
+
+    # Tiếp tục hay không
+    retry = input("\nBạn có muốn thử lại không? (y/n): ").strip().lower()
+    if retry != 'y':
+        print("Kết thúc chương trình.")
+        break
